@@ -1,0 +1,21 @@
+# Secrets — never commit
+.env
+
+# Internal-only — must NOT be exposed in the public repo
+CLAUDE.md
+docs/
+CheckIA_Bambara_ML_API_Plan.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Model / HF caches
+.cache/
+hf_cache/
+
+# OS
+.DS_Store

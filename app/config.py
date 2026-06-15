@@ -10,15 +10,19 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    # Configured models (Hugging Face id or local path). Swappable via env.
-    mt_model: str = "facebook/nllb-200-distilled-600M"
+    # Configured providers/models (label, HF id, or local path). Swappable via env.
+    mt_model: str = "google-translate-v2"
     asr_model: str = "sudoping01/bambara-asr-v2"
 
-    # Inference device: cpu | cuda | mps
+    # Inference device for local models (ASR): cpu | cuda | mps
     device: str = "cpu"
 
-    # Token for gated models. Presence only is ever inspected; never logged.
+    # Secrets: presence only is ever inspected; never logged.
     hf_token: str | None = None
+    google_translate_api_key: str | None = None
+
+    # Timeout (seconds) for the translation provider HTTP call.
+    translate_timeout: float = 10.0
 
     @property
     def registry(self) -> dict[str, str]:

@@ -1,18 +1,15 @@
 import pytest
 
-from app.lang import SUPPORTED, UnsupportedLanguageError, to_nllb
+from app.lang import SUPPORTED, UnsupportedLanguageError, to_google
 
 
-@pytest.mark.parametrize(
-    "friendly,nllb",
-    [("bm", "bam_Latn"), ("fr", "fra_Latn"), ("en", "eng_Latn")],
-)
-def test_to_nllb_maps_known_codes(friendly, nllb):
-    assert to_nllb(friendly) == nllb
+@pytest.mark.parametrize("friendly,google", [("bm", "bm"), ("fr", "fr"), ("en", "en")])
+def test_to_google_maps_known_codes(friendly, google):
+    assert to_google(friendly) == google
 
 
-def test_to_nllb_is_case_insensitive():
-    assert to_nllb("BM") == "bam_Latn"
+def test_to_google_is_case_insensitive():
+    assert to_google("BM") == "bm"
 
 
 def test_supported_set():
@@ -20,6 +17,6 @@ def test_supported_set():
 
 
 @pytest.mark.parametrize("bad", ["es", "", "bambara", "xx"])
-def test_to_nllb_rejects_unknown(bad):
+def test_to_google_rejects_unknown(bad):
     with pytest.raises(UnsupportedLanguageError):
-        to_nllb(bad)
+        to_google(bad)

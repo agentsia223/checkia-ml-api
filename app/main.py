@@ -8,7 +8,7 @@ from .config import Settings, get_settings
 from .routers import transcribe, translate
 from .schemas import HealthResponse, ModelsResponse
 from .services.asr import ASRService
-from .services.translation import TranslationService
+from .services.translation import GoogleTranslationService
 
 
 @asynccontextmanager
@@ -16,8 +16,10 @@ async def lifespan(app: FastAPI):
     """Load configured models once and hold them on app.state."""
     settings = get_settings()
     app.state.settings = settings
-    app.state.translation = TranslationService(
-        settings.mt_model, settings.device, settings.hf_token
+    app.state.translation = GoogleTranslationService(
+        settings.mt_model,
+        settings.google_translate_api_key,
+        settings.translate_timeout,
     ).load()
     app.state.asr = ASRService(
         settings.asr_model, settings.device, settings.hf_token

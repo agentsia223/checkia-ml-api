@@ -1,9 +1,14 @@
 """Runtime tuning: size CPU thread pools to the container's CPU quota.
 
-In a container, PyTorch detects the *host* core count and spawns that many
-intra-op threads. When the cgroup CPU quota is smaller than the host core count,
-this oversubscribes the CPU and triggers CFS throttling, which severely degrades
-inference latency. We read the quota and cap the thread pools to match.
+In a container, the native math libraries behind torch and numpy (OpenMP / MKL /
+OpenBLAS) detect the *host* core count and start that many threads. When the
+cgroup CPU quota is smaller than the host core count, this oversubscribes the
+CPU and triggers CFS throttling, which severely degrades inference latency.
+
+We read the quota and cap the pools to match via the standard thread env vars,
+set *before* those libraries initialise. (Setting torch's thread counts through
+its Python API at runtime — after import, before model load — can deadlock, so
+we use the environment instead, which is what the library authors expect.)
 """
 
 from __future__ import annotations
@@ -15,6 +20,13 @@ from pathlib import Path
 _CGROUP_V2 = Path("/sys/fs/cgroup/cpu.max")
 _CGROUP_V1_QUOTA = Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
 _CGROUP_V1_PERIOD = Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
+
+_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
 
 
 def _read(path: Path) -> str | None:
@@ -59,20 +71,14 @@ def resolve_thread_count(quota: float | None, cpu_count: int | None) -> int:
     return max(1, min(int(math.floor(quota)), cores))
 
 
-def configure_torch_threads(logger=None) -> int:
-    """Cap torch intra-op/inter-op thread pools to the cgroup CPU quota.
+def configure_thread_env() -> int:
+    """Cap CPU-library thread pools to the cgroup quota via env vars.
 
-    Returns the thread count applied. Call once at startup, before models load.
+    Must run before torch / numpy import their native threading libraries. Uses
+    ``setdefault`` so an explicit override (e.g. a Railway env var) still wins.
+    Returns the resolved thread count.
     """
-    import torch
-
     n = resolve_thread_count(cgroup_cpu_quota(), os.cpu_count())
-    torch.set_num_threads(n)
-    try:
-        torch.set_num_interop_threads(n)
-    except RuntimeError:
-        # The interop pool is already initialised; it can only be set once.
-        pass
-    if logger is not None:
-        logger.info("Capped torch threads to %d (cgroup-aware)", n)
+    for var in _THREAD_ENV_VARS:
+        os.environ.setdefault(var, str(n))
     return n

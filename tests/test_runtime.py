@@ -1,8 +1,9 @@
+import os
 from pathlib import Path
 
 import pytest
 
-from app.runtime import cgroup_cpu_quota, resolve_thread_count
+from app.runtime import cgroup_cpu_quota, configure_thread_env, resolve_thread_count
 
 
 def _write(path: Path, text: str) -> Path:
@@ -56,11 +57,18 @@ def test_resolve_thread_count(quota, cpu, expected):
     assert resolve_thread_count(quota, cpu) == expected
 
 
-def test_configure_torch_threads_applies_to_torch():
-    import torch
+def test_configure_thread_env_sets_defaults(monkeypatch):
+    for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        monkeypatch.delenv(var, raising=False)
 
-    from app.runtime import configure_torch_threads
-
-    n = configure_torch_threads()
+    n = configure_thread_env()
     assert isinstance(n, int) and n >= 1
-    assert torch.get_num_threads() == n
+    assert os.environ["OMP_NUM_THREADS"] == str(n)
+    assert os.environ["MKL_NUM_THREADS"] == str(n)
+    assert os.environ["OPENBLAS_NUM_THREADS"] == str(n)
+
+
+def test_configure_thread_env_does_not_override_existing(monkeypatch):
+    monkeypatch.setenv("OMP_NUM_THREADS", "7")
+    configure_thread_env()
+    assert os.environ["OMP_NUM_THREADS"] == "7"  # setdefault leaves an explicit value alone

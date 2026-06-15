@@ -19,13 +19,12 @@ class GoogleTranslationService:
         model_label: str,
         api_key: str | None,
         timeout: float = 10.0,
-        base_url: str = BASE_URL,
         transport: httpx.BaseTransport | None = None,
     ):
         self.model_label = model_label
         self._api_key = api_key
         self._timeout = timeout
-        self._base_url = base_url
+        self._base_url = BASE_URL
         self._transport = transport
         self._client: httpx.Client | None = None
 
@@ -40,6 +39,11 @@ class GoogleTranslationService:
             )
         self._client = httpx.Client(timeout=self._timeout, transport=self._transport)
         return self
+
+    def close(self) -> None:
+        if self._client is not None:
+            self._client.close()
+            self._client = None
 
     def translate(self, text: str, source_lang: str, target_lang: str) -> str:
         if self._client is None:

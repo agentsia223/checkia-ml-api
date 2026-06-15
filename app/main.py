@@ -24,7 +24,10 @@ async def lifespan(app: FastAPI):
     app.state.asr = ASRService(
         settings.asr_model, settings.device, settings.hf_token
     ).load()
-    yield
+    try:
+        yield
+    finally:
+        app.state.translation.close()
 
 
 @asynccontextmanager

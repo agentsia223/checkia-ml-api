@@ -14,13 +14,13 @@ from .services.translation import GoogleTranslationService
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load configured models once and hold them on app.state."""
-    import logging
+    from .runtime import configure_thread_env
 
-    from .runtime import configure_torch_threads
-
-    # Match CPU thread pools to the container's quota before any model loads,
-    # so torch doesn't oversubscribe the host's cores and throttle inference.
-    configure_torch_threads(logging.getLogger("uvicorn.error"))
+    # Cap CPU-library thread pools to the container's quota before torch loads,
+    # so the math libraries don't oversubscribe the host's cores (which triggers
+    # CFS throttling and ~10x-slower inference). Runs before the first torch
+    # import below.
+    configure_thread_env()
 
     settings = get_settings()
     app.state.settings = settings

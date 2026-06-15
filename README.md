@@ -1,6 +1,6 @@
 # checkia-ml-api
 
-A self-contained FastAPI service exposing Bambara-enabling NLP models behind a
+A FastAPI service exposing Bambara-enabling NLP models behind a
 stable HTTP contract:
 
 - **`POST /translate`** — text translation between Bambara, French, and English.
@@ -13,6 +13,7 @@ variables without changing the API contract or any client.
 
 - [uv](https://docs.astral.sh/uv/) (manages the Python 3.12 toolchain and deps)
 - A Hugging Face token for gated models (set `HF_TOKEN`)
+- A Google Cloud Translation API key (set `GOOGLE_TRANSLATE_API_KEY`)
 
 ## Setup
 
@@ -57,7 +58,8 @@ All via environment / `.env` (see `.env.example`):
 
 | Variable    | Purpose                                   | Default                              |
 |-------------|-------------------------------------------|--------------------------------------|
-| `MT_MODEL`  | Translation model (HF id or local path)   | `facebook/nllb-200-distilled-600M`   |
+| `MT_MODEL`  | Translation provider label (reported as `model`) | `google-translate-v2`          |
+| `GOOGLE_TRANSLATE_API_KEY` | Google Cloud Translation API key (required) | —                  |
 | `ASR_MODEL` | ASR model (HF id or local path)           | `sudoping01/bambara-asr-v2`          |
 | `DEVICE`    | `cpu` \| `cuda` \| `mps`                   | `cpu`                                |
 | `HF_TOKEN`  | Hugging Face token (required for gated)   | —                                    |

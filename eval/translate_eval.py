@@ -17,7 +17,7 @@ import sys
 import sacrebleu
 
 from app.config import get_settings
-from app.services.translation import TranslationService
+from app.services.translation import GoogleTranslationService
 
 BLEU_TARGET = 35.0
 
@@ -27,9 +27,9 @@ def load_dataset(path: str) -> list[dict]:
         return [json.loads(line) for line in fh if line.strip()]
 
 
-def run(path: str, model_id: str, device: str, hf_token: str | None) -> dict:
+def run(path: str, model_id: str, api_key: str | None, timeout: float) -> dict:
     rows = load_dataset(path)
-    service = TranslationService(model_id, device, hf_token).load()
+    service = GoogleTranslationService(model_id, api_key, timeout).load()
 
     hyps = [service.translate(r["text"], r["source_lang"], r["target_lang"]) for r in rows]
     refs = [[r["reference"] for r in rows]]
@@ -49,8 +49,8 @@ def main() -> int:
     result = run(
         args.dataset,
         args.model or settings.mt_model,
-        settings.device,
-        settings.hf_token,
+        settings.google_translate_api_key,
+        settings.translate_timeout,
     )
 
     print(f"model: {result['model']}")

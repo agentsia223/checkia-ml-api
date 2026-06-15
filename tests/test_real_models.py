@@ -14,10 +14,15 @@ pytestmark = pytest.mark.real
 
 def test_translation_real():
     settings = get_settings()
-    from app.services.translation import TranslationService
+    if not settings.google_translate_api_key:
+        pytest.skip("GOOGLE_TRANSLATE_API_KEY not set; translation provider unavailable")
 
-    service = TranslationService(
-        settings.mt_model, settings.device, settings.hf_token
+    from app.services.translation import GoogleTranslationService
+
+    service = GoogleTranslationService(
+        settings.mt_model,
+        settings.google_translate_api_key,
+        settings.translate_timeout,
     ).load()
     out = service.translate("Bonjour le monde", "fr", "en")
     assert isinstance(out, str) and out.strip()

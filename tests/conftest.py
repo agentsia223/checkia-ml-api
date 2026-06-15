@@ -8,7 +8,7 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.lang import to_nllb
+from app.lang import to_google
 from app.main import _noop_lifespan, create_app
 
 FAKE_MT = "fake-mt-model"
@@ -20,8 +20,8 @@ class FakeTranslationService:
 
     def translate(self, text: str, source_lang: str, target_lang: str) -> str:
         # Exercise the real language mapping so unsupported codes still raise.
-        to_nllb(source_lang)
-        to_nllb(target_lang)
+        to_google(source_lang)
+        to_google(target_lang)
         return f"[{source_lang}->{target_lang}] {text}"
 
 

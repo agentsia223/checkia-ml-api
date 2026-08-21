@@ -16,10 +16,17 @@ _WHISPER_LANG = {"fr": "french", "en": "english"}
 
 
 class ASRService:
-    def __init__(self, model_id: str, device: str = "cpu", hf_token: str | None = None):
+    def __init__(
+        self,
+        model_id: str,
+        device: str = "cpu",
+        hf_token: str | None = None,
+        max_new_tokens: int = 200,
+    ):
         self.model_id = model_id
         self.device = device
         self._hf_token = hf_token
+        self.max_new_tokens = max_new_tokens
         self._processor = None
         self._model = None
 
@@ -66,7 +73,10 @@ class ASRService:
             samples, sampling_rate=TARGET_SR, return_tensors="pt"
         ).input_features.to(self.device)
 
-        gen_kwargs: dict = {}
+        # Bound the decode. Without this Whisper may generate up to its
+        # max_length (448) even for a few seconds of audio, which dominates
+        # latency because decoding is sequential.
+        gen_kwargs: dict = {"max_new_tokens": self.max_new_tokens}
         whisper_lang = _WHISPER_LANG.get((language or "").lower())
         if whisper_lang is not None:
             gen_kwargs["forced_decoder_ids"] = self._processor.get_decoder_prompt_ids(

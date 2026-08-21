@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     # Inference device for local models (ASR): cpu | cuda | mps
     device: str = "cpu"
 
+    # Hard cap on ASR decoding length. Whisper defaults to max_length=448;
+    # an under-prompted model can ramble to that cap, making every clip cost
+    # ~448 sequential decoder steps regardless of audio length.
+    asr_max_new_tokens: int = 200
+
+    # Max transcriptions decoded at once (each one is CPU-heavy).
+    asr_max_concurrency: int = 2
+
     # Secrets: presence only is ever inspected; never logged.
     hf_token: str | None = None
     google_translate_api_key: str | None = None

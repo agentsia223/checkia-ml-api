@@ -2,6 +2,7 @@
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 
 from ..audio import fetch_audio, load_audio
 from ..schemas import TranscribeResponse
@@ -47,14 +48,24 @@ async def transcribe(request: Request) -> TranscribeResponse:
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=422, detail=f"Could not fetch audio_url: {exc}")
 
+    # Decoding and inference are blocking CPU work. This endpoint is async, so
+    # running them inline would stall the event loop for the whole request —
+    # blocking /health and /translate for every other caller. Offload both.
     try:
-        samples, duration_s = load_audio(file_bytes)
+        samples, duration_s = await run_in_threadpool(load_audio, file_bytes)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Could not decode audio: {exc}")
 
     service = request.app.state.asr
+    # Bound how many transcriptions decode at once; each is CPU-heavy and
+    # unbounded parallelism just thrashes the container.
+    semaphore = getattr(request.app.state, "asr_semaphore", None)
     try:
-        text = service.transcribe(samples, language=language)
+        if semaphore is None:
+            text = await run_in_threadpool(service.transcribe, samples, language)
+        else:
+            async with semaphore:
+                text = await run_in_threadpool(service.transcribe, samples, language)
     except Exception as exc:  # model/inference failure
         raise HTTPException(status_code=503, detail=f"Transcription failed: {exc}")
 

@@ -1,5 +1,6 @@
 """FastAPI application: loads models once at startup, mounts routers."""
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -30,8 +31,12 @@ async def lifespan(app: FastAPI):
         settings.translate_timeout,
     ).load()
     app.state.asr = ASRService(
-        settings.asr_model, settings.device, settings.hf_token
+        settings.asr_model,
+        settings.device,
+        settings.hf_token,
+        settings.asr_max_new_tokens,
     ).load()
+    app.state.asr_semaphore = asyncio.Semaphore(settings.asr_max_concurrency)
     try:
         yield
     finally:

@@ -10,4 +10,7 @@ def test_health(client):
 def test_models_reflects_registry(client):
     resp = client.get("/models")
     assert resp.status_code == 200
-    assert resp.json() == {"translation": FAKE_MT, "asr": FAKE_ASR}
+    body = resp.json()
+    assert body["translation"] == FAKE_MT
+    assert body["asr"] == FAKE_ASR
+    assert body["asr_quantization"] == "int8"

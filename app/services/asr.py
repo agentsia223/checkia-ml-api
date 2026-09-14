@@ -6,7 +6,11 @@ LoRA adapter on a Whisper base — loads here unchanged.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 TARGET_SR = 16_000
 
@@ -22,11 +26,15 @@ class ASRService:
         device: str = "cpu",
         hf_token: str | None = None,
         max_new_tokens: int = 200,
+        quantization: str = "int8",
+        low_cpu_mem_usage: bool = True,
     ):
         self.model_id = model_id
         self.device = device
         self._hf_token = hf_token
         self.max_new_tokens = max_new_tokens
+        self.quantization = quantization
+        self.low_cpu_mem_usage = low_cpu_mem_usage
         self._processor = None
         self._model = None
 
@@ -52,7 +60,7 @@ class ASRService:
 
         self._processor = WhisperProcessor.from_pretrained(source, token=self._hf_token)
         model = WhisperForConditionalGeneration.from_pretrained(
-            source, token=self._hf_token
+            source, token=self._hf_token, low_cpu_mem_usage=self.low_cpu_mem_usage
         )
 
         if base is not None:
@@ -61,8 +69,32 @@ class ASRService:
             model = PeftModel.from_pretrained(model, self.model_id, token=self._hf_token)
             model = model.merge_and_unload()
 
+        if self.quantization == "int8":
+            if self.device == "cpu":
+                import torch
+
+                try:
+                    from torch.ao.quantization import quantize_dynamic
+                except ImportError:
+                    from torch.quantization import quantize_dynamic
+
+                model = quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
+                logger.info("ASR model quantized: dynamic int8 (torch.nn.Linear)")
+            else:
+                logger.warning(
+                    "asr_quantization=int8 requested but device=%s; dynamic int8 "
+                    "quantization is CPU-only, skipping",
+                    self.device,
+                )
+        else:
+            logger.info("ASR model quantization: none")
+
         self._model = model.to(self.device)
         self._model.eval()
+
+        import gc
+
+        gc.collect()
         return self
 
     def transcribe(self, samples: np.ndarray, language: str | None = None) -> str:

@@ -2,7 +2,10 @@
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ALLOWED_ASR_QUANTIZATION = {"int8", "none"}
 
 
 class Settings(BaseSettings):
@@ -24,6 +27,23 @@ class Settings(BaseSettings):
 
     # Max transcriptions decoded at once (each one is CPU-heavy).
     asr_max_concurrency: int = 2
+
+    # Dynamic int8 quantization of the ASR model's Linear layers. CPU-only;
+    # "none" disables it and loads the model at full precision.
+    asr_quantization: str = "int8"
+
+    # Pass low_cpu_mem_usage=True to from_pretrained to reduce the peak
+    # memory used while loading the model.
+    asr_low_cpu_mem: bool = True
+
+    @field_validator("asr_quantization")
+    @classmethod
+    def _validate_asr_quantization(cls, value: str) -> str:
+        if value not in _ALLOWED_ASR_QUANTIZATION:
+            raise ValueError(
+                f"asr_quantization must be one of {sorted(_ALLOWED_ASR_QUANTIZATION)}, got {value!r}"
+            )
+        return value
 
     # Secrets: presence only is ever inspected; never logged.
     hf_token: str | None = None

@@ -16,6 +16,7 @@ class ModelsResponse(BaseModel):
 
     translation: str
     asr: str
+    asr_quantization: str | None = None
 
 
 class TranslateRequest(BaseModel):

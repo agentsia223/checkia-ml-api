@@ -153,8 +153,8 @@ def test_asr_load_applies_int8_quantization_on_cpu(monkeypatch):
 
     calls = []
 
-    def fake_quantize_dynamic(model, layer_set, dtype):
-        calls.append((model, layer_set, dtype))
+    def fake_quantize_dynamic(model, layer_set, dtype, inplace=False):
+        calls.append((model, layer_set, dtype, inplace))
         return model
 
     monkeypatch.setattr(
@@ -164,9 +164,10 @@ def test_asr_load_applies_int8_quantization_on_cpu(monkeypatch):
     service.load()
 
     assert len(calls) == 1
-    _, layer_set, dtype = calls[0]
+    _, layer_set, dtype, inplace = calls[0]
     assert layer_set == {torch.nn.Linear}
     assert dtype == torch.qint8
+    assert inplace is True
 
 
 def test_asr_load_skips_quantization_when_none(monkeypatch):
@@ -181,6 +182,52 @@ def test_asr_load_skips_quantization_when_none(monkeypatch):
     service.load()
 
     assert calls == []
+
+
+def test_asr_load_releases_memory_to_os_for_int8(monkeypatch):
+    import app.services.asr as asr_module
+
+    service = _asr_service_with_fake_loading(monkeypatch, quantization="int8")
+    monkeypatch.setattr(
+        "torch.ao.quantization.quantize_dynamic", lambda model, *a, **k: model
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        asr_module, "_release_memory_to_os", lambda: calls.append(True)
+    )
+
+    service.load()
+
+    assert calls == [True]
+
+
+def test_asr_load_releases_memory_to_os_for_none(monkeypatch):
+    import app.services.asr as asr_module
+
+    service = _asr_service_with_fake_loading(monkeypatch, quantization="none")
+
+    calls = []
+    monkeypatch.setattr(
+        asr_module, "_release_memory_to_os", lambda: calls.append(True)
+    )
+
+    service.load()
+
+    assert calls == [True]
+
+
+def test_release_memory_to_os_does_not_raise_when_ctypes_cdll_fails(monkeypatch):
+    import ctypes
+
+    from app.services.asr import _release_memory_to_os
+
+    def fake_cdll(name):
+        raise OSError("no libc here")
+
+    monkeypatch.setattr(ctypes, "CDLL", fake_cdll)
+
+    _release_memory_to_os()  # must not raise
 
 
 def test_asr_transcribe_works_on_quantized_fake_model():

@@ -35,6 +35,8 @@ async def lifespan(app: FastAPI):
         settings.device,
         settings.hf_token,
         settings.asr_max_new_tokens,
+        settings.asr_quantization,
+        settings.asr_low_cpu_mem,
     ).load()
     app.state.asr_semaphore = asyncio.Semaphore(settings.asr_max_concurrency)
     try:
@@ -61,7 +63,11 @@ def create_app(*, lifespan=lifespan) -> FastAPI:
     @app.get("/models", response_model=ModelsResponse)
     def models(request: Request) -> ModelsResponse:
         settings: Settings = request.app.state.settings
-        return ModelsResponse(translation=settings.mt_model, asr=settings.asr_model)
+        return ModelsResponse(
+            translation=settings.mt_model,
+            asr=settings.asr_model,
+            asr_quantization=settings.asr_quantization,
+        )
 
     return app
 

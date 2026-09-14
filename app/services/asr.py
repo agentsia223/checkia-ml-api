@@ -32,6 +32,38 @@ def _get_rss_mb() -> float | None:
     return None
 
 
+
+def _model_footprint(model) -> tuple[float, int, int]:
+    """Return (tensor_mb, n_quantized_linear, n_float_linear) for a torch module.
+
+    tensor_mb is the real size of parameters + buffers, independent of RSS, so the
+    two numbers together separate "quantization did not take" from "float weights
+    still referenced" from "allocator holding freed pages".
+    """
+    try:
+        import torch
+
+        if not isinstance(model, torch.nn.Module):
+            return 0.0, 0, 0
+        total = sum(t.numel() * t.element_size() for t in model.parameters())
+        total += sum(t.numel() * t.element_size() for t in model.buffers())
+        # Dynamic-quantized Linear layers store packed int8 weights, not parameters.
+        n_q = n_f = 0
+        for m in model.modules():
+            name = type(m).__name__
+            if name == "Linear":
+                n_f += 1
+            elif "Quantized" in name and "Linear" in name:
+                n_q += 1
+                try:
+                    w = m.weight()  # packed weight accessor
+                    total += w.numel() * w.element_size()
+                except Exception:
+                    pass
+        return total / (1024 * 1024), n_q, n_f
+    except Exception:
+        return 0.0, 0, 0
+
 def _release_memory_to_os() -> None:
     """Force a GC pass and return freed heap pages to the OS (glibc only).
 
@@ -135,6 +167,11 @@ class ASRService:
             logger.info("ASR loaded: RSS ≈ %.0f MB (before cleanup)", rss_before)
 
         _release_memory_to_os()
+        tensor_mb, n_q, n_f = _model_footprint(model)
+        logger.info(
+            "ASR footprint: tensors ≈ %.0f MB, quantized Linear=%d, float Linear=%d, RSS ≈ %s MB",
+            tensor_mb, n_q, n_f, _get_rss_mb(),
+        )
 
         rss_after = _get_rss_mb()
         if rss_after is not None:

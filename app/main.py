@@ -1,6 +1,7 @@
 """FastAPI application: loads models once at startup, mounts routers."""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -16,6 +17,10 @@ from .services.translation import GoogleTranslationService
 async def lifespan(app: FastAPI):
     """Load configured models once and hold them on app.state."""
     from .runtime import configure_thread_env
+
+    # The app never configured logging, so the root logger sat at WARNING and every
+    # logger.info() in the services was dropped. INFO is what the load diagnostics use.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     # Cap CPU-library thread pools to the container's quota before torch loads,
     # so the math libraries don't oversubscribe the host's cores (which triggers

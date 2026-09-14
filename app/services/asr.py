@@ -19,6 +19,38 @@ TARGET_SR = 16_000
 _WHISPER_LANG = {"fr": "french", "en": "english"}
 
 
+def _get_rss_mb() -> float | None:
+    """Read current RSS (in MB) from /proc/self/status, if available."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    kb = int(line.split()[1])
+                    return kb / 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _release_memory_to_os() -> None:
+    """Force a GC pass and return freed heap pages to the OS (glibc only).
+
+    quantize_dynamic and the PEFT merge leave large freed allocations sitting
+    in glibc's malloc arenas that are never handed back to the OS on their
+    own, inflating steady-state RSS well past the size of the live model.
+    malloc_trim(0) reclaims them. No-op (and safe) on non-glibc platforms
+    (macOS dev, musl).
+    """
+    import ctypes
+    import gc
+
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass  # non-glibc platform (macOS dev, musl)
+
+
 class ASRService:
     def __init__(
         self,
@@ -66,8 +98,9 @@ class ASRService:
         if base is not None:
             from peft import PeftModel
 
-            model = PeftModel.from_pretrained(model, self.model_id, token=self._hf_token)
-            model = model.merge_and_unload()
+            peft_model = PeftModel.from_pretrained(model, self.model_id, token=self._hf_token)
+            model = peft_model.merge_and_unload()
+            del peft_model
 
         if self.quantization == "int8":
             if self.device == "cpu":
@@ -78,7 +111,12 @@ class ASRService:
                 except ImportError:
                     from torch.quantization import quantize_dynamic
 
-                model = quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
+                # inplace=True: the default (False) deep-copies the entire
+                # fp32 model before converting, roughly tripling peak memory
+                # during load (fp32 original + fp32 copy + int8 result).
+                model = quantize_dynamic(
+                    model, {torch.nn.Linear}, dtype=torch.qint8, inplace=True
+                )
                 logger.info("ASR model quantized: dynamic int8 (torch.nn.Linear)")
             else:
                 logger.warning(
@@ -89,12 +127,20 @@ class ASRService:
         else:
             logger.info("ASR model quantization: none")
 
-        self._model = model.to(self.device)
-        self._model.eval()
+        model = model.to(self.device)
+        model.eval()
 
-        import gc
+        rss_before = _get_rss_mb()
+        if rss_before is not None:
+            logger.info("ASR loaded: RSS ≈ %.0f MB (before cleanup)", rss_before)
 
-        gc.collect()
+        _release_memory_to_os()
+
+        rss_after = _get_rss_mb()
+        if rss_after is not None:
+            logger.info("ASR loaded: RSS ≈ %.0f MB", rss_after)
+
+        self._model = model
         return self
 
     def transcribe(self, samples: np.ndarray, language: str | None = None) -> str:

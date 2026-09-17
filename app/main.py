@@ -42,6 +42,7 @@ async def lifespan(app: FastAPI):
         settings.asr_max_new_tokens,
         settings.asr_quantization,
         settings.asr_low_cpu_mem,
+        cache_dir=settings.asr_cache_dir or None,
     ).load()
     app.state.asr_semaphore = asyncio.Semaphore(settings.asr_max_concurrency)
     try:
@@ -72,6 +73,7 @@ def create_app(*, lifespan=lifespan) -> FastAPI:
             translation=settings.mt_model,
             asr=settings.asr_model,
             asr_quantization=settings.asr_quantization,
+            asr_cache=bool(settings.asr_cache_dir),
         )
 
     return app

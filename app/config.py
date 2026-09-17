@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     # memory used while loading the model.
     asr_low_cpu_mem: bool = True
 
+    # Directory for cached, pre-quantized ASR artifacts. When set, the model is
+    # built (fp32 load + merge + quantize) in a short-lived subprocess and the
+    # serving process only ever loads the quantized result, so the fp32 pages
+    # never sit resident in this process. Empty string disables the cache.
+    asr_cache_dir: str = ""
+
     @field_validator("asr_quantization")
     @classmethod
     def _validate_asr_quantization(cls, value: str) -> str:

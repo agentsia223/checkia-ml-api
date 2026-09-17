@@ -7,8 +7,14 @@ LoRA adapter on a Whisper base — loads here unchanged.
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+import sys
+from time import monotonic as _monotonic
 
 import numpy as np
+
+from .asr_cache import artifact_paths, cache_key, load_and_quantize
 
 logger = logging.getLogger(__name__)
 
@@ -48,18 +54,24 @@ def _model_footprint(model) -> tuple[float, int, int]:
         total = sum(t.numel() * t.element_size() for t in model.parameters())
         total += sum(t.numel() * t.element_size() for t in model.buffers())
         # Dynamic-quantized Linear layers store packed int8 weights, not parameters.
+        # torch's quantized Linear is ALSO named plain "Linear" (it lives in
+        # torch.ao.nn.quantized.dynamic.modules.linear), so classify by module
+        # path, not class name — name-only classification undercounts quantized
+        # layers as float ones.
         n_q = n_f = 0
         for m in model.modules():
+            module_path = type(m).__module__
             name = type(m).__name__
-            if name == "Linear":
+            if "quantized" in module_path:
+                if name == "Linear":
+                    n_q += 1
+                    try:
+                        w = m.weight()  # packed weight accessor
+                        total += w.numel() * w.element_size()
+                    except Exception:
+                        pass
+            elif name == "Linear":
                 n_f += 1
-            elif "Quantized" in name and "Linear" in name:
-                n_q += 1
-                try:
-                    w = m.weight()  # packed weight accessor
-                    total += w.numel() * w.element_size()
-                except Exception:
-                    pass
         return total / (1024 * 1024), n_q, n_f
     except Exception:
         return 0.0, 0, 0
@@ -92,6 +104,7 @@ class ASRService:
         max_new_tokens: int = 200,
         quantization: str = "int8",
         low_cpu_mem_usage: bool = True,
+        cache_dir: str | None = None,
     ):
         self.model_id = model_id
         self.device = device
@@ -99,6 +112,7 @@ class ASRService:
         self.max_new_tokens = max_new_tokens
         self.quantization = quantization
         self.low_cpu_mem_usage = low_cpu_mem_usage
+        self.cache_dir = cache_dir
         self._processor = None
         self._model = None
 
@@ -116,48 +130,73 @@ class ASRService:
         except Exception:
             return None
 
-    def load(self) -> "ASRService":
-        from transformers import WhisperForConditionalGeneration, WhisperProcessor
-
-        base = self._peft_base()
-        source = base or self.model_id
-
-        self._processor = WhisperProcessor.from_pretrained(source, token=self._hf_token)
-        model = WhisperForConditionalGeneration.from_pretrained(
-            source, token=self._hf_token, low_cpu_mem_usage=self.low_cpu_mem_usage
+    def _load_legacy(self) -> tuple[object, object]:
+        """Load, merge, and quantize the model in this process (fp32 briefly resident)."""
+        return load_and_quantize(
+            self.model_id,
+            self.device,
+            self._hf_token,
+            self.quantization,
+            self.low_cpu_mem_usage,
         )
 
-        if base is not None:
-            from peft import PeftModel
+    def _build_cache_args(self, cache_dir: str) -> list[str]:
+        args = [
+            sys.executable,
+            "-m",
+            "app.services.asr_cache",
+            "--model-id",
+            self.model_id,
+            "--device",
+            self.device,
+            "--quantization",
+            self.quantization,
+            "--cache-dir",
+            cache_dir,
+        ]
+        if not self.low_cpu_mem_usage:
+            args.append("--no-low-cpu-mem-usage")
+        # The token is deliberately NOT passed on the command line (it would show in
+        # the process list); the builder reads it from the inherited environment.
+        return args
 
-            peft_model = PeftModel.from_pretrained(model, self.model_id, token=self._hf_token)
-            model = peft_model.merge_and_unload()
-            del peft_model
+    def _load_from_cache(self, cache_dir: str) -> tuple[object, object]:
+        import torch
+        from transformers import WhisperProcessor
 
-        if self.quantization == "int8":
-            if self.device == "cpu":
-                import torch
+        key = cache_key(self.model_id, self.quantization)
+        model_path, processor_dir = artifact_paths(cache_dir, key)
 
-                try:
-                    from torch.ao.quantization import quantize_dynamic
-                except ImportError:
-                    from torch.quantization import quantize_dynamic
+        if not os.path.exists(model_path):
+            args = self._build_cache_args(cache_dir)
+            started = _monotonic()
+            subprocess.run(args, check=True, env=os.environ.copy())
+            logger.info(
+                "ASR cache artifact built by subprocess in %.1fs (key=%s)",
+                _monotonic() - started, key,
+            )
 
-                # inplace=True: the default (False) deep-copies the entire
-                # fp32 model before converting, roughly tripling peak memory
-                # during load (fp32 original + fp32 copy + int8 result).
-                model = quantize_dynamic(
-                    model, {torch.nn.Linear}, dtype=torch.qint8, inplace=True
+        model = torch.load(model_path, map_location=self.device, weights_only=False)
+        processor = WhisperProcessor.from_pretrained(processor_dir)
+        model.eval()
+        logger.info("ASR loaded from cache: key=%s", key)
+        return processor, model
+
+    def load(self) -> "ASRService":
+        source_label = "legacy"
+        if self.cache_dir:
+            try:
+                self._processor, model = self._load_from_cache(self.cache_dir)
+                source_label = "cache"
+            except Exception as exc:
+                logger.error(
+                    "ASR cache load failed (%s: %s); falling back to legacy in-process load",
+                    type(exc).__name__, exc,
                 )
-                logger.info("ASR model quantized: dynamic int8 (torch.nn.Linear)")
-            else:
-                logger.warning(
-                    "asr_quantization=int8 requested but device=%s; dynamic int8 "
-                    "quantization is CPU-only, skipping",
-                    self.device,
-                )
+                self._processor, model = self._load_legacy()
+                source_label = "legacy"
         else:
-            logger.info("ASR model quantization: none")
+            self._processor, model = self._load_legacy()
 
         model = model.to(self.device)
         model.eval()
@@ -169,8 +208,9 @@ class ASRService:
         _release_memory_to_os()
         tensor_mb, n_q, n_f = _model_footprint(model)
         logger.info(
-            "ASR footprint: tensors ≈ %.0f MB, quantized Linear=%d, float Linear=%d, RSS ≈ %s MB",
-            tensor_mb, n_q, n_f, _get_rss_mb(),
+            "ASR footprint: tensors ≈ %.0f MB, quantized Linear=%d, float Linear=%d, "
+            "RSS ≈ %s MB, source=%s",
+            tensor_mb, n_q, n_f, _get_rss_mb(), source_label,
         )
 
         rss_after = _get_rss_mb()

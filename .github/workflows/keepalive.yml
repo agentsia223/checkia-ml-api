@@ -1,0 +1,58 @@
+name: Keep the speech service wakeable
+
+# The service runs in Railway's serverless mode and sleeps when idle. A short
+# sleep wakes fine on the first request; a sleep of several weeks left the
+# container unable to come back ("may require a rebuild", per Railway's docs).
+# This job wakes it a few times a day so it never sleeps that long, and if it
+# cannot be woken, redeploys it.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wake the service and wait for a healthy answer
+        id: probe
+        env:
+          HEALTH_URL: https://checkia-ml-api-production.up.railway.app/health
+        run: |
+          # ~3 minutes of patience: a cold start takes about a minute, and the
+          # first request after sleep is allowed to fail.
+          for i in $(seq 1 18); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$HEALTH_URL" || echo 000)
+            echo "attempt $i: HTTP $code"
+            if [ "$code" = "200" ]; then echo "healthy=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+            sleep 10
+          done
+          echo "healthy=false" >> "$GITHUB_OUTPUT"
+
+      - name: Redeploy the service if it could not be woken
+        if: steps.probe.outputs.healthy == 'false' && env.RAILWAY_TOKEN != ''
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          npm install -g @railway/cli
+          railway redeploy --service checkia-ml-api --environment production --yes
+          for i in $(seq 1 24); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://checkia-ml-api-production.up.railway.app/health || echo 000)
+            echo "post-redeploy attempt $i: HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 15
+          done
+          echo "service still unhealthy after redeploy"; exit 1
+
+      - name: Fail loudly when it cannot be woken and no token is configured
+        if: steps.probe.outputs.healthy == 'false' && env.RAILWAY_TOKEN == ''
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          echo "::error::Speech service could not be woken. Add a Railway project token as the RAILWAY_TOKEN repo secret to enable automatic redeploys."
+          exit 1
